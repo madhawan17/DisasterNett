@@ -1,8 +1,8 @@
-# AMBROSIA — Global Flood Intelligence Platform
+#  Global Flood Intelligence Platform
 
 > **Intelligence, mapped at the scale of worlds.**
 
-AMBROSIA is a full-stack, multi-service flood intelligence platform built for hackathon conditions. It fuses satellite SAR (Synthetic Aperture Radar) imagery, predictive LSTM deep learning, road-network graph analysis, and a cinematic React frontend into a cohesive system for global flood detection, risk scoring, and lifeline infrastructure assessment.
+ is a full-stack, multi-service flood intelligence platform built for hackathon conditions. It fuses satellite SAR (Synthetic Aperture Radar) imagery, predictive LSTM deep learning, road-network graph analysis, and a cinematic React frontend into a cohesive system for global flood detection, risk scoring, and lifeline infrastructure assessment.
 
 ---
 
@@ -32,7 +32,7 @@ AMBROSIA is a full-stack, multi-service flood intelligence platform built for ha
 
 ## 1. Project Overview
 
-AMBROSIA addresses a critical real-world problem: **floods are increasing in frequency and severity globally, yet situational awareness — especially for infrastructure planners and emergency responders — remains fragmented and delayed.**
+ addresses a critical real-world problem: **floods are increasing in frequency and severity globally, yet situational awareness — especially for infrastructure planners and emergency responders — remains fragmented and delayed.**
 
 The platform solves this by providing:
 
@@ -713,7 +713,7 @@ User clicks "Continue with Google"
 
 | Variable                     | Description                                        | Example                                        |
 | ---------------------------- | -------------------------------------------------- | ---------------------------------------------- |
-| `MONGO_DB_CONNECTION_STRING` | MongoDB Atlas connection string                    | `mongodb+srv://user:pass@cluster.mongodb.net/` |
+| ` |
 | `DB_PASS`                    | Database password (used in connection string)      | `your_password`                                |
 | `JWT_SECRET`                 | Secret key for JWT signing (change in production!) | `your-very-long-random-secret`                 |
 | `GOOGLE_CLIENT_ID`           | Google Cloud OAuth 2.0 Client ID                   | `662868xxxxx.apps.googleusercontent.com`       |
@@ -807,7 +807,7 @@ cp frontend/.env.example frontend/.env
 
 ```dotenv
 # Root .env
-MONGO_DB_CONNECTION_STRING=mongodb+srv://USER:PASS@cluster.mongodb.net/?appName=Cluster0
+
 JWT_SECRET=a-very-long-random-secret-string-at-least-32-chars
 FRONTEND_URL=http://localhost:5173
 

@@ -1,0 +1,23 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Serving-only requirements — for Docker / Hugging Face Spaces deployment.
+# torch (CPU) is installed separately in the Dockerfile via the PyTorch wheel
+# index to avoid pulling multi-GB CUDA packages.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Core scientific
+numpy>=1.26,<3
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.3
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0
+
+# HTTP client (Open-Meteo weather fetch)
+httpx>=0.27.0
+
+# Config loading
+PyYAML>=6.0
+python-dotenv>=1.0.1

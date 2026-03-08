@@ -1,0 +1,63 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# .dockerignore — keep the build context lean.
+# Everything listed here is excluded from the Docker build context.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Python environment (enormous — never send to daemon)
+.venv/
+venv/
+env/
+
+# Git + dev metadata
+.git/
+.gitignore
+.gitattributes
+
+# Raw / processed training data (not needed at inference time)
+data/
+
+# MLflow experiment tracking
+mlruns/
+
+# Test suite
+tests/
+
+# PowerShell bootstrap scripts
+scripts/
+
+# Artifact subdirs that are NOT needed at inference time
+artifacts/checkpoints/
+artifacts/graphs/
+artifacts/hparam/
+artifacts/insight_reports/
+
+# Duplicate artifact dirs under src/
+src/data/
+src/artifacts/
+
+# DVC pipeline definition (training only)
+dvc.yaml
+dvc.lock
+.dvc/
+
+# Python project config (not required at runtime)
+pyproject.toml
+requirements.txt
+requirements-dev.txt
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Documentation
+README.md
+*.md
+
+# Compiled Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Logs / temp files
+*.log
+*.tmp

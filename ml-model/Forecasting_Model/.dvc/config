@@ -1,0 +1,14 @@
+[core]
+    remote = s3remote
+    autostage = true
+
+# ── Primary: AWS S3 bucket ────────────────────────────────────────────
+# Credentials stored in .dvc/config.local (gitignored)
+['remote "s3remote"']
+    url = s3://nmims-hack/nmims-hack-dvc
+    region = ap-south-1
+
+# ── Fallback: DagsHub S3-compatible storage ──────────────────────
+['remote "dagshub_s3"']
+    url = s3://dvc
+    endpointurl = https://dagshub.com/HarshilForWork/VPC.s3

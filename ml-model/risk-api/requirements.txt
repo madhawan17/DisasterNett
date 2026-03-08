@@ -1,0 +1,7 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+earthengine-api>=0.1.390
+numpy>=1.24.0
+shapely>=2.0.0
+geojson>=3.1.0
+python-dotenv>=1.0.0

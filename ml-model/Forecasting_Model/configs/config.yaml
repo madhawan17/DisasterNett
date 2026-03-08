@@ -1,0 +1,75 @@
+project:
+  name: flood-risk-lstm-v1
+  seed: 42
+  num_workers: 2
+
+pipeline:
+  run_ingest: true
+  run_train: true
+  run_risk_mapper: true
+
+data:
+  label_column: Flash_Flood_Risk   # binary 0/1 — real flash flood events
+  flood_threshold: 0.5             # sigmoid output >= this -> flood
+  window_size: 24                  # 24-hour sliding window (matches hourly data)
+  split:
+    train: 0.8
+    test: 0.2
+
+model:
+  hidden_size: 128
+  lstm_layers: 2
+  dropout: 0.3
+
+loss:
+  name: bce                  # mse | bce
+  pos_weight: 200.0          # flood class upweight — real imbalance is ~1:893
+
+train:
+  epochs: 50
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  amp: false
+  optimizer: adamw           # adamw | adam | sgd
+  scheduler: cosine          # cosine | step | none
+  scheduler_step_size: 10    # epochs per LR step (only for step scheduler)
+  scheduler_gamma: 0.5       # LR decay factor (only for step scheduler)
+  early_stopping:
+    enabled: true
+    patience: 15
+    min_delta: 0.0          # any strict improvement counts; set >0 to ignore tiny gains
+
+eval:
+  primary_metric: pr_auc
+  threshold: 0.5
+
+mlflow:
+  enabled: true
+  experiment_name: flood-risk-lstm
+  run_name: sliding-window-lstm
+
+inference:
+  default_features: null     # path to a JSON with 20 feature values; null = random stub
+  output_path: ""
+
+hparam:
+  trials: 20                 # Optuna trials per model
+  models:                    # models to tune (used by hparam_tune DVC stage)
+    - lstm
+    - xgboost
+    - lightgbm
+    - ridge
+
+
+paths:
+  csv_raw: data/raw/global_flash_flood_data_decade.csv
+  csv_processed: data/processed/flood.csv
+  scaler: artifacts/scaler.joblib
+  ingest_manifest: artifacts/ingest_manifest.json
+  checkpoints: artifacts/checkpoints
+  models_dir: models          # best.pt saved here (DVC-tracked)
+  graphs_dir: artifacts/graphs # training curves + eval plots
+  hparam_dir: artifacts/hparam  # hyperparameter tuning charts + comparison
+  insight_reports: artifacts/insight_reports

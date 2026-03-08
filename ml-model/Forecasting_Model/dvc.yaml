@@ -1,0 +1,48 @@
+stages:
+  ingest:
+    cmd: python -m src.pipeline.ingestion.run_ingest_real
+    wdir: .
+    deps:
+      - src/pipeline/ingestion/run_ingest_real.py
+      - src/pipeline/ingestion/loader.py
+      - src/config.py
+      - configs/config.yaml
+    outs:
+      - data/processed/flood.csv
+      - artifacts/ingest_manifest.json
+
+  train:
+    cmd: python -m src.pipeline.training.run_train
+    deps:
+      - src/pipeline/training/run_train.py
+      - src/pipeline/training/trainer.py
+      - src/pipeline/training/model.py
+      - src/pipeline/training/early_stopping.py
+      - src/pipeline/preprocessing/normalizer.py
+      - src/pipeline/feature_engineering/sliding_window.py
+      - src/pipeline/eval/metrics.py
+      - src/pipeline/eval/feature_importance.py
+      - src/pipeline/saving/checkpoint.py
+      - src/utils/losses.py
+      - src/utils/mlflow_dagshub.py
+      - src/config.py
+      - configs/config.yaml
+      - data/processed/flood.csv
+    outs:
+      - models/best.pt
+      - artifacts/checkpoints/metrics.json
+      - artifacts/graphs
+
+  risk_map:
+    cmd: python -m src.pipeline.risk.run_risk_mapper
+    deps:
+      - src/pipeline/risk/run_risk_mapper.py
+      - src/pipeline/saving/checkpoint.py
+      - src/pipeline/ingestion/loader.py
+      - src/config.py
+      - configs/config.yaml
+      - models/best.pt
+      - tests/fixtures/sample_aoi.geojson
+    outs:
+      - artifacts/insight_reports
+

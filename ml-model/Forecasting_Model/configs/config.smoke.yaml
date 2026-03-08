@@ -1,0 +1,91 @@
+project:
+  name: satellite-insight-engine-v1
+  seed: 42
+  num_workers: 2
+pipeline:
+  run_ingest: true
+  run_train: true
+  run_risk_mapper: true
+paths:
+  npz: data/processed/train_samples.npz
+  tfrecord: data/processed/train_samples.tfrecord
+  ingest_manifest: artifacts/ingest_manifest.json
+  checkpoints: artifacts/checkpoints
+  insight_reports: artifacts/insight_reports
+data:
+  chip_size: 256
+  resolution_m: 10
+  crs: EPSG:32643
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+  sentinel1_root: data/raw/sentinel1
+  nasadem_root: data/raw/nasadem
+features:
+  weather_days: 14
+  weather_variables:
+  - rainfall
+  - soil_moisture
+ingest:
+  mode: gee
+  synthetic_samples: 128
+  class_balance_ratio: '1:1'
+  label_definition: flood_occurs_within_chip_t_plus_24h
+  fallback_to_synthetic_on_gee_failure: false
+  materialization_after_gee: authentic
+gee:
+  sentinel1_collection: COPERNICUS/S1_GRD
+  nasadem_collection: NASA/NASADEM_HGT/001
+  nasadem_band: elevation
+  gpm_collection: NASA/GPM_L3/IMERG_V07
+  gpm_band: precipitation
+  era5_collection: ECMWF/ERA5_LAND/HOURLY
+  era5_soil_band: volumetric_soil_water_layer_1
+  flood_events_collection: GLOBAL_FLOOD_DB/MODIS_EVENTS/V1
+  flood_event_flood_band: flooded
+  flood_event_scale_m: 250
+  weather_scale_m: 10000
+  s1_days_before: 3
+  s1_days_after: 1
+  max_events: 2
+  positive_points_per_event: 2
+  negative_points_per_event: 2
+  max_samples: 8
+  min_samples_required: 2
+  aoi_geojson: tests/fixtures/sample_aoi.geojson
+  date_start: '2018-01-01'
+  date_end: '2025-12-31'
+  export_bucket: ''
+  export_prefix: satellite-insight-engine
+model:
+  backbone: efficientnet_b0
+  lstm_hidden_size: 128
+  lstm_layers: 2
+  dropout: 0.2
+  fusion_hidden: 128
+loss:
+  alpha: 0.25
+  gamma: 2.0
+train:
+  epochs: 3
+  batch_size: 2
+  lr: 0.0003
+  weight_decay: 0.0001
+  grad_accum_steps: 4
+  amp: true
+  grad_clip: 1.0
+eval:
+  primary_metric: pr_auc
+  threshold: 0.5
+mlflow:
+  enabled: true
+  experiment_name: satellite-insight-engine
+  run_name: hybrid-cnn-lstm
+dvc:
+  remote_name: dagshub_s3
+  remote_url: s3://<dagshub-bucket>/satellite-insight-engine
+inference:
+  default_aoi: tests/fixtures/sample_aoi.geojson
+  default_t0: '2025-08-01'
+  output_path: ''

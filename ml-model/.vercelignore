@@ -1,0 +1,9 @@
+mongo/
+docs/
+.venv/
+.env
+.git/
+.gitignore
+README.md
+.claude/
+.DS_Store

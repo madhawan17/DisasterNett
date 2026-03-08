@@ -1,0 +1,140 @@
+schema: '2.0'
+stages:
+  ingest:
+    cmd: python -m src.pipeline.ingestion.run_ingest_real
+    deps:
+    - path: configs/config.yaml
+      hash: md5
+      md5: e5125ec6e6983c43e2367688025f0f09
+      size: 2022
+    - path: src/config.py
+      hash: md5
+      md5: 26674bc765ffff11b3f2f0abecea13b8
+      size: 1010
+    - path: src/pipeline/ingestion/loader.py
+      hash: md5
+      md5: 13618f8aa9a5d2931fcbbb0014504e33
+      size: 3500
+    - path: src/pipeline/ingestion/run_ingest_real.py
+      hash: md5
+      md5: 0a4d1ce81f4503a8739ea8faf95b9660
+      size: 7796
+    outs:
+    - path: artifacts/ingest_manifest.json
+      hash: md5
+      md5: 6dabd05c27995a0aeeb4295a76439953
+      size: 610
+    - path: data/processed/flood.csv
+      hash: md5
+      md5: 4d5dcc05375869a31b92b9d57b5f5825
+      size: 598589795
+  train:
+    cmd: python -m src.pipeline.training.run_train
+    deps:
+    - path: configs/config.yaml
+      hash: md5
+      md5: eb69d10757f518e2d0d3235021eb192c
+      size: 1729
+    - path: data/processed/flood.csv
+      hash: md5
+      md5: a6af551460039b44272607e4f6bd58f6
+      size: 59127674
+    - path: src/config.py
+      hash: md5
+      md5: 26674bc765ffff11b3f2f0abecea13b8
+      size: 1010
+    - path: src/pipeline/eval/feature_importance.py
+      hash: md5
+      md5: cc9dea107e247ef16a63ae0642866541
+      size: 11442
+    - path: src/pipeline/eval/metrics.py
+      hash: md5
+      md5: 0e1e4faf11e9142746adccdc616b51bd
+      size: 3269
+    - path: src/pipeline/feature_engineering/sliding_window.py
+      hash: md5
+      md5: 2a5f6ab2478d30f18223277a23d77436
+      size: 3075
+    - path: src/pipeline/preprocessing/normalizer.py
+      hash: md5
+      md5: e030bfecc1409ca072fb5375ef66002b
+      size: 2662
+    - path: src/pipeline/saving/checkpoint.py
+      hash: md5
+      md5: eb34dd65b25901c7b73b76be76360417
+      size: 3383
+    - path: src/pipeline/training/early_stopping.py
+      hash: md5
+      md5: 9f583de1338146ee4504cda0ce7c01a7
+      size: 2362
+    - path: src/pipeline/training/model.py
+      hash: md5
+      md5: 4e98275aa0de6ff565d57a624c982a9c
+      size: 2326
+    - path: src/pipeline/training/run_train.py
+      hash: md5
+      md5: 9b4f38446839483cb92effdc53fa3557
+      size: 16588
+    - path: src/pipeline/training/trainer.py
+      hash: md5
+      md5: ee8d6f8ffb849ba505270caa82fae582
+      size: 5176
+    - path: src/utils/losses.py
+      hash: md5
+      md5: 1719788b5d96e33560c6cf34d9123535
+      size: 1130
+    - path: src/utils/mlflow_dagshub.py
+      hash: md5
+      md5: 786a44c3947f0259da74772ec57a3dcd
+      size: 949
+    outs:
+    - path: artifacts/checkpoints/metrics.json
+      hash: md5
+      md5: 619551dd677a4bc4dc8c02c9bee92f3d
+      size: 1010
+    - path: artifacts/graphs
+      hash: md5
+      md5: 6ab5acc2e8d160fed3c09ed4bd92f8eb.dir
+      size: 337726
+      nfiles: 8
+    - path: models/best.pt
+      hash: md5
+      md5: 3c60816b1d0e28eb426b8e089e3de350
+      size: 840255
+  risk_map:
+    cmd: python -m src.pipeline.risk.run_risk_mapper
+    deps:
+    - path: configs/config.yaml
+      hash: md5
+      md5: eb69d10757f518e2d0d3235021eb192c
+      size: 1729
+    - path: models/best.pt
+      hash: md5
+      md5: 3c60816b1d0e28eb426b8e089e3de350
+      size: 840255
+    - path: src/config.py
+      hash: md5
+      md5: 26674bc765ffff11b3f2f0abecea13b8
+      size: 1010
+    - path: src/pipeline/ingestion/loader.py
+      hash: md5
+      md5: adda8c5d26a00064bd47aa57ce386606
+      size: 3109
+    - path: src/pipeline/risk/run_risk_mapper.py
+      hash: md5
+      md5: f79663195933501b775d42b9d9371a86
+      size: 3621
+    - path: src/pipeline/saving/checkpoint.py
+      hash: md5
+      md5: eb34dd65b25901c7b73b76be76360417
+      size: 3383
+    - path: tests/fixtures/sample_aoi.geojson
+      hash: md5
+      md5: a66546f3a4c8b9b70cb56cf065d023d7
+      size: 405
+    outs:
+    - path: artifacts/insight_reports
+      hash: md5
+      md5: a484bde35fe9a29c6e97204c6f19b1ff.dir
+      size: 381
+      nfiles: 1

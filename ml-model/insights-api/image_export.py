@@ -117,6 +117,18 @@ def upload_to_cloudinary(
     -------
     HTTPS URL of the uploaded image, or None on failure
     """
+    cloud_name = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    api_key = os.getenv("CLOUDINARY_API_KEY", "")
+    api_secret = os.getenv("CLOUDINARY_API_SECRET", "")
+
+    if not cloud_name or not api_key or not api_secret:
+        log.warning(
+            "Cloudinary credentials not fully configured (CLOUDINARY_CLOUD_NAME=%s). "
+            "Skipping image upload — will use GEE thumbnail fallback.",
+            cloud_name or "<empty>",
+        )
+        return None
+
     _ensure_cloudinary()
 
     try:
@@ -125,13 +137,12 @@ def upload_to_cloudinary(
             public_id=f"ambrosia/sar/{public_id}",
             resource_type="image",
             overwrite=True,
-            folder="ambrosia/sar",
         )
         url = result.get("secure_url", result.get("url"))
         log.info("Uploaded SAR image to Cloudinary: %s", url)
         return url
     except Exception as e:
-        log.error("Cloudinary upload failed: %s", e)
+        log.warning("Cloudinary upload failed: %s — will use GEE thumbnail fallback.", e)
         return None
 
 

@@ -9,7 +9,7 @@ import {
   sortResultsByBoundary,
 } from "../../api/geocodeApi.js";
 import { insightsApi } from "../../api/insightsApi.js";
-import { mockFloodResponse } from "../../data/mockFloodResponse.js";
+
 import GeoSearchInput from "../ui/GeoSearchInput.jsx";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,30 +228,11 @@ export default function RegionForm() {
     const { data, error } = await insightsApi.analyze(payload);
 
     if (error || !data?.run_id) {
+      store.setRunState({ status: "failed", progress: 0, error: error || "No run ID returned" });
       showNotification(
-        "Live SAR analysis unavailable. Using simulated data.",
-        "warning",
+        `SAR analysis failed: ${error || "No run ID returned from server"}`,
+        "error",
       );
-
-      // Fallback: animated mock pipeline
-      store.resetRun();
-      store.setRunState({ status: "queued", progress: 0 });
-      const stages = ["queued", "preprocessing", "detecting", "scoring", "completed"];
-      let idx = 0;
-      const timer = setInterval(() => {
-        idx++;
-        if (idx < stages.length) {
-          store.setRunState({
-            status: stages[idx],
-            progress: Math.round((idx / (stages.length - 1)) * 100),
-          });
-        }
-        if (stages[idx] === "completed") {
-          clearInterval(timer);
-          store.setResult(mockFloodResponse);
-          showNotification("Flood detection complete (simulated)", "success");
-        }
-      }, 1200);
       return;
     }
 
@@ -294,6 +275,17 @@ export default function RegionForm() {
           },
           flood_zones: { type: "FeatureCollection", features: [] },
         };
+
+        // Merge top-level API fields so ResultsPanel can show image + insight
+        result.sar_image_url = runData.sar_image_url || null;
+        result.ai_insight = runData.ai_insight || null;
+        result.processing_time_s = runData.processing_time_s || null;
+        result.patches = runData.patches || [];
+        result.scene_id = runData.result?.summary?.scene_id || runData.scene_id || null;
+        result.sensor = runData.result?.summary?.sensor || runData.sensor || "S1_GRD";
+        result.detector = runData.result?.summary?.detector || runData.detector || "sar_logratio";
+        result.mean_db_drop = runData.mean_db_drop || null;
+        result.analysis_date = runData.analysis_date || null;
 
         store.setResult(result);
         showNotification(

@@ -2,7 +2,6 @@ import React, { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { insightsApi } from "../../api/insightsApi.js";
 import { useLifelineStore } from "../../stores/lifelineStore.js";
-import { mockLifelineData } from "../../data/mockLifelineData.js";
 import GeoSearchInput from "../ui/GeoSearchInput.jsx";
 import { geocodeApi } from "../../api/geocodeApi.js";
 import { generateLifelineReport } from "../../utils/reports/generateLifelineReport.js";
@@ -75,25 +74,9 @@ export default function LifelinePanel() {
         await insightsApi.analyzeLifeline(payload);
 
       if (apiError) {
-        showNotification(
-          "Live infrastructure scan failed. Analyzing simulated data subset.",
-          "warning",
-        );
-        const stages = ["surveying", "mapping", "diagnosing", "compiling"];
-        let idx = 0;
-        const timer = setInterval(() => {
-          idx++;
-          if (idx < stages.length) {
-            // Simulated loading, handled by ProgressOverlay's built-in progress simulation
-          }
-          if (idx === stages.length) {
-            clearInterval(timer);
-            setLifelineData(mockLifelineData);
-            showNotification("Simulated scanning complete", "success");
-            setStoreLoading(false);
-          }
-        }, 1200);
-        return; // Early return to let setInterval finish the mock flow
+        setStoreError(`Infrastructure scan failed: ${apiError}`);
+        setStoreLoading(false);
+        return;
       }
 
       setLifelineData(data);

@@ -46,7 +46,7 @@ export default function Signup() {
     try {
       await signup(email, password);
       showNotification(
-        `Welcome to Ambrosia, ${email.split("@")[0]}`,
+        `Welcome to Disaternet, ${email.split("@")[0]}`,
         "success",
       );
       setTimeout(() => setActiveTab("landing"), 300);
@@ -72,8 +72,8 @@ export default function Signup() {
     <div className="flex w-full h-screen bg-[#020617] overflow-hidden font-sans relative">
       {/* ── Top-Left Brand Overview ── */}
       <div className="absolute top-20 left-20 sm:left-12 xl:left-20 z-50 pointer-events-none">
-        <div className="font-display font-bold text-3xl tracking-[0.2em] text-white leading-none uppercase">
-          Ambrosia
+        <div className="brand-wordmark-wide text-3xl text-white">
+          Disaternet
         </div>
       </div>
 

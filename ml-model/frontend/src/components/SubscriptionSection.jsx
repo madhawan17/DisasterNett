@@ -1,5 +1,5 @@
 /**
- * SubscriptionSection — AMBROSIA pricing + outlook
+ * SubscriptionSection — DISATERNET pricing + outlook
  * Direct Razorpay integration (frontend only, no backend)
  */
 
@@ -214,7 +214,7 @@ export default function SubscriptionSection() {
       key: rzpKeyId,
       amount: 100,
       currency: "INR",
-      name: "Ambrosia Intelligence",
+      name: "Disaternet Intelligence",
       description: `${plan.tier} Clearance — Monthly Subscription`,
       prefill: {
         email: authUser?.email || "",
@@ -316,7 +316,7 @@ export default function SubscriptionSection() {
                 lineHeight: "1.8",
               }}
             >
-              Ambrosia processes billions of signals across every timezone,
+              Disaternet processes billions of signals across every timezone,
               language, and channel. What you act on is already verified.
             </p>
           </div>
@@ -635,7 +635,7 @@ export default function SubscriptionSection() {
               fontFamily: "monospace",
             }}
           >
-            Ambrosia © {new Date().getFullYear()}
+            Disaternet © {new Date().getFullYear()}
           </span>
           <span
             className="tracking-[0.35em] uppercase"

@@ -87,6 +87,7 @@
 
 html {
   scroll-behavior: smooth;
+  scroll-padding-top: 96px;
 }
 
 body {
@@ -99,6 +100,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
   min-height: 100dvh;
+  overscroll-behavior-y: none;
 }
 
 /* App-wide gradient — subtle, non-distracting */
@@ -127,6 +129,23 @@ body {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.brand-wordmark {
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.brand-wordmark-wide {
+  font-family: var(--font-body);
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  line-height: 0.95;
   text-transform: uppercase;
 }
 
@@ -733,7 +752,7 @@ canvas + div {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   CESIUM OVERRIDES — match COSMEON dark theme
+   CESIUM OVERRIDES — match DISATERNET dark theme
 ═══════════════════════════════════════════════════════════════ */
 .cesium-viewer {
   font-family: var(--font-body) !important;

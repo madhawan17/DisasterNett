@@ -4,8 +4,10 @@ import Nav from "./components/common/Nav.jsx";
 import Landing from "./pages/Landing.jsx";
 import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
-import GlobeAnalysis from "./pages/GlobeAnalysis.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
+import Forecast from "./pages/Forecast.jsx";
 import FloodInsights from "./pages/FloodInsights.jsx";
+import Detection from "./pages/Detection.jsx";
 import { useAppStore } from "./stores/appStore.js";
 import { useAuth } from "./hooks/useAuth.js";
 import { useInsightsStore } from "./stores/insightsStore.js";
@@ -14,7 +16,9 @@ const PAGES = {
   landing: Landing,
   login: Login,
   signup: Signup,
-  globe: GlobeAnalysis,
+  globe: Dashboard,
+  forecast: Forecast,
+  detection: Detection,
   insights: FloodInsights,
 };
 
@@ -90,7 +94,7 @@ export default function App() {
   // Initialization: Read the current URL path to set the tab correctly on load
   useEffect(() => {
     const path = window.location.pathname;
-    const isProtected = path === "/globe" || path === "/insights";
+    const isProtected = path === "/globe" || path === "/insights" || path === "/forecast" || path === "/detection";
 
     if (isProtected && !isAuthenticated) {
       setTimeout(
@@ -105,6 +109,8 @@ export default function App() {
     if (path === "/login") setActiveTab("login");
     else if (path === "/signup") setActiveTab("signup");
     else if (path === "/globe") setActiveTab("globe");
+    else if (path === "/forecast") setActiveTab("forecast");
+    else if (path === "/detection") setActiveTab("detection");
     else if (path === "/insights") setActiveTab("insights");
     else if (path === "/") setActiveTab("landing");
   }, [setActiveTab, isAuthenticated, showNotification]);
@@ -116,12 +122,14 @@ export default function App() {
       login: "/login",
       signup: "/signup",
       globe: "/globe",
+      forecast: "/forecast",
+      detection: "/detection",
       insights: "/insights",
     };
 
     // Auth check before tab change takes effect
     if (
-      (activeTab === "globe" || activeTab === "insights") &&
+      (activeTab === "globe" || activeTab === "insights" || activeTab === "forecast" || activeTab === "detection") &&
       !isAuthenticated
     ) {
       showNotification("Please sign in to access this page", "warning");

@@ -4,7 +4,7 @@ async function nominatimFetch(path, params) {
   try {
     const qs = new URLSearchParams(params)
     const res = await fetch(`${NOMINATIM_BASE}${path}?${qs}`, {
-      headers: { 'User-Agent': 'COSMEON-FloodDetection/1.0' },
+      headers: { 'User-Agent': 'Disaternet-FloodDetection/1.0' },
     })
     if (!res.ok) return { data: null, error: `HTTP ${res.status}` }
     const data = await res.json()

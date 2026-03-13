@@ -228,10 +228,13 @@ def fetch_forecast_window(lat: float, lon: float, past_hours: int = 24, forecast
 
     n_hist     = int((~df["is_forecast"]).sum())
     n_forecast = int(df["is_forecast"].sum())
-    if n_forecast < forecast_hours - 1:
+    # For multi-day forecasts (up to 16 days / 384h), Open-Meteo may return
+    # slightly fewer rows than requested. Accept ≥80% of expected hours.
+    min_expected = max(1, int(forecast_hours * 0.8))
+    if n_forecast < min_expected:
         raise ValueError(
             f"Forecast API returned only {n_forecast} future rows for ({lat}, {lon}); "
-            f"expected at least {forecast_hours - 1}."
+            f"expected at least {min_expected} (80% of {forecast_hours})."
         )
     if n_hist < 12:
         raise ValueError(

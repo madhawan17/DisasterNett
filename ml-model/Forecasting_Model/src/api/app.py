@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.api.inference import predict
 from src.api.inference_forecast import predict_24h
+from src.api.inference_multiday import predict_multiday, predict_districts
 from src.api.inference_raw import predict_from_raw
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -50,9 +51,10 @@ app = FastAPI(
     description=(
         "Given a geographic coordinate, fetches live hourly weather from Open-Meteo, "
         "engineers 13 hydrological features, and returns a flood risk probability "
-        "from a trained LSTM model."
+        "from a trained LSTM model. Supports single-point nowcast, 24h forecast, "
+        "14-day multi-day forecast, and district-level batch forecasting."
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -92,6 +94,62 @@ class ForecastResponse(BaseModel):
     peak_flood_time:          str | None = Field(None, description="Timestamp when flood risk is highest in the next 24h")
     features_snapshot:        dict  = Field(..., description="13 engineered feature values at last forecast hour")
     threshold_used:           float = Field(..., description="F1-optimal decision threshold used to compute alert_level")
+
+
+# ── Multi-day / District schemas ─────────────────────────────────────────────
+
+class MultidayForecastRequest(BaseModel):
+    lat:            float = Field(..., ge=-90,  le=90,  description="Latitude")
+    lon:            float = Field(..., ge=-180, le=180, description="Longitude")
+    forecast_days:  int   = Field(14, ge=1, le=16, description="Number of days to forecast (1-16)")
+
+
+class DailyForecast(BaseModel):
+    day:         int
+    date:        str
+    max_prob:    float
+    avg_prob:    float
+    alert_level: str
+    peak_hour:   str
+
+
+class MultidayForecastResponse(BaseModel):
+    lat:                  float
+    lon:                  float
+    forecast_days:        int
+    daily_forecasts:      list[DailyForecast]
+    overall_max_prob:     float
+    overall_alert_level:  str
+    peak_day:             int
+    peak_date:            str
+    threshold_used:       float
+
+
+class DistrictForecastRequest(BaseModel):
+    bbox:            list[float] = Field(..., min_length=4, max_length=4, description="[west, south, east, north]")
+    forecast_days:   int = Field(14, ge=1, le=16, description="Number of days (1-16)")
+    max_districts:   int = Field(9, ge=4, le=25, description="Grid density (4=2x2, 9=3x3, 16=4x4)")
+
+
+class DistrictResult(BaseModel):
+    name:                str
+    lat:                 float
+    lon:                 float
+    overall_max_prob:    float
+    overall_alert_level: str
+    peak_day:            int
+    peak_date:           str
+    daily_forecasts:     list[DailyForecast]
+    threshold_used:      float
+    error:               str | None = None
+
+
+class DistrictForecastResponse(BaseModel):
+    bbox:             list[float]
+    forecast_days:    int
+    grid_size:        int
+    total_districts:  int
+    districts:        list[DistrictResult]
 
 
 class RawPredictRequest(BaseModel):
@@ -196,6 +254,87 @@ def _run_forecast(lat: float, lon: float) -> ForecastResponse:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Forecast failed: {exc}") from exc
     return ForecastResponse(**result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Day Forecast (14-day)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post(
+    "/forecast/multiday",
+    response_model=MultidayForecastResponse,
+    tags=["forecast"],
+    summary="14-day multi-day flood forecast for a single coordinate",
+)
+def forecast_multiday_post(body: MultidayForecastRequest) -> MultidayForecastResponse:
+    """Produce day-by-day flood risk across up to 16 days.
+
+    Uses the Open-Meteo NWP forecast API + LSTM sliding window.
+    Returns daily max/avg probability, alert levels, and peak timing.
+    """
+    try:
+        result = predict_multiday(body.lat, body.lon, body.forecast_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Multi-day forecast failed: {exc}") from exc
+    return MultidayForecastResponse(**result)
+
+
+@app.get(
+    "/forecast/multiday",
+    response_model=MultidayForecastResponse,
+    tags=["forecast"],
+    summary="14-day multi-day flood forecast (GET)",
+)
+def forecast_multiday_get(
+    lat: float = Query(..., ge=-90,  le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    forecast_days: int = Query(14, ge=1, le=16),
+) -> MultidayForecastResponse:
+    """GET version of /forecast/multiday."""
+    try:
+        result = predict_multiday(lat, lon, forecast_days)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Multi-day forecast failed: {exc}") from exc
+    return MultidayForecastResponse(**result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# District-Level Batch Forecast
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post(
+    "/forecast/districts",
+    response_model=DistrictForecastResponse,
+    tags=["forecast"],
+    summary="14-day district-level batch forecast across a bounding box",
+)
+def forecast_districts_post(body: DistrictForecastRequest) -> DistrictForecastResponse:
+    """Run multi-day forecasts for a grid of points across a bounding box.
+
+    Divides the bbox into a grid (e.g. 3×3 = 9 districts) and runs a
+    14-day LSTM forecast for each cell center. Returns districts ranked
+    by overall flood risk (highest first).
+
+    ⚠️ This endpoint makes multiple Open-Meteo calls and may take
+    30-120 seconds for a 3×3 grid with 14-day horizons.
+    """
+    try:
+        result = predict_districts(body.bbox, body.forecast_days, body.max_districts)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"District forecast failed: {exc}") from exc
+    return DistrictForecastResponse(**result)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

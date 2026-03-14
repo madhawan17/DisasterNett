@@ -43,6 +43,7 @@ class Point(BaseModel):
 class InfrastructureAreaInput(BaseModel):
     area_name: str
     critical_assets_exposed: int = 0
+    critical_infrastructure: Optional[List[str]] = None
     facilities_cut_off: int = 0
     road_access_disruption_index: Optional[float] = Field(default=None, ge=0, le=1)
     score_override: Optional[float] = Field(default=None, ge=0, le=100)
@@ -74,9 +75,13 @@ class DistrictSummary(BaseModel):
     urban_pct: float
     fused_factors: List[Dict[str, Any]]
     component_scores: Dict[str, Any]
+    weighted_contributions: Dict[str, Any]
     forecast_summary: Dict[str, Any]
     detection_summary: Dict[str, Any]
+    population_summary: Dict[str, Any]
     infrastructure_summary: Dict[str, Any]
+    alerts: List[str]
+    explanation: List[str]
 
 
 @app.get("/health")
@@ -157,8 +162,8 @@ def _get_latest_detection_signal(district_bbox: List[float]) -> Dict[str, Any]:
                 cur.execute(
                     """
                     SELECT id, location, bbox, analysis_date, created_at,
-                           flood_percentage, mean_db_drop, population_exposed,
-                           confidence_avg, zones_count
+                           flood_percentage, flood_area_km2, mean_db_drop,
+                           population_exposed, confidence_avg, zones_count
                     FROM runs
                     WHERE status = 'completed'
                       AND bbox IS NOT NULL
@@ -188,6 +193,7 @@ def _get_latest_detection_signal(district_bbox: List[float]) -> Dict[str, Any]:
                     "analysis_date": str(best_match.get("analysis_date") or ""),
                     "created_at": str(best_match.get("created_at") or ""),
                     "flood_percentage": float(best_match.get("flood_percentage") or 0.0),
+                    "flood_area_km2": float(best_match.get("flood_area_km2") or 0.0),
                     "mean_db_drop": float(best_match.get("mean_db_drop") or 0.0),
                     "population_exposed": int(best_match.get("population_exposed") or 0),
                     "confidence_avg": float(best_match.get("confidence_avg") or 0.0),
@@ -205,7 +211,9 @@ def _build_infrastructure_map(
     if not overrides:
         return {}
     return {
-        _normalize_name(item.area_name): item.dict()
+        _normalize_name(item.area_name): (
+            item.model_dump() if hasattr(item, "model_dump") else item.dict()
+        )
         for item in overrides
     }
 
@@ -243,6 +251,7 @@ async def analyze_risk(req: CheckRequest):
                 population=pop,
                 rainfall_mm=rain,
                 land_cover=land,
+                area_km2=district["area_km2"],
                 detection_signal=detection_signal,
                 forecast_signal=forecast_signal,
                 infrastructure_signal=infrastructure_signal,
@@ -262,9 +271,13 @@ async def analyze_risk(req: CheckRequest):
                     urban_pct=round(land.get("urban", 0) * 100, 1),
                     fused_factors=fused["factors"],
                     component_scores=fused["component_scores"],
+                    weighted_contributions=fused["weighted_contributions"],
                     forecast_summary=fused["signals"]["forecast"],
                     detection_summary=fused["signals"]["detection"],
+                    population_summary=fused["signals"]["population"],
                     infrastructure_summary=fused["signals"]["infrastructure"],
+                    alerts=fused["alerts"],
+                    explanation=fused["explanation"],
                 )
             )
         except Exception as exc:
@@ -285,11 +298,16 @@ async def analyze_risk(req: CheckRequest):
             "operational_score": summary.risk_score,
             "risk_classification": summary.risk_classification,
             "operational_classification": summary.risk_classification,
+            "risk_level": summary.risk_classification.title(),
+            "alerts": summary.alerts,
             "contributing_factors": summary.risk_factors,
+            "explanation": summary.explanation,
             "fused_factors": summary.fused_factors,
             "component_scores": summary.component_scores,
+            "weighted_contributions": summary.weighted_contributions,
             "forecast_summary": summary.forecast_summary,
             "detection_summary": summary.detection_summary,
+            "population_summary": summary.population_summary,
             "infrastructure_summary": summary.infrastructure_summary,
             "rainfall_mm": summary.rainfall_mm,
             "urban_pct": summary.urban_pct,
@@ -305,12 +323,16 @@ async def analyze_risk(req: CheckRequest):
     )
     max_score = max((summary.risk_score for summary in summaries), default=0)
     top_classification = summaries[0].risk_classification if summaries else "LOW"
-    avg_hazard = (
-        sum(float(summary.component_scores.get("hazard", 0.0)) for summary in summaries) / len(summaries)
+    avg_forecast = (
+        sum(float(summary.component_scores.get("forecast", 0.0)) for summary in summaries) / len(summaries)
         if summaries else 0.0
     )
-    avg_exposure = (
-        sum(float(summary.component_scores.get("exposure", 0.0)) for summary in summaries) / len(summaries)
+    avg_detection = (
+        sum(float(summary.component_scores.get("detection", 0.0)) for summary in summaries) / len(summaries)
+        if summaries else 0.0
+    )
+    avg_population_impact = (
+        sum(float(summary.component_scores.get("population", 0.0)) for summary in summaries) / len(summaries)
         if summaries else 0.0
     )
     forecast_coverage = sum(
@@ -335,16 +357,18 @@ async def analyze_risk(req: CheckRequest):
         },
         "hydrological_metrics": {
             "accumulated_rainfall_mm": round(avg_rainfall, 2),
-            "average_hazard_score": round(avg_hazard, 2),
+            "average_forecast_score": round(avg_forecast, 2),
+            "average_detection_score": round(avg_detection, 2),
         },
         "exposure_metrics": {
-            "average_exposure_score": round(avg_exposure, 2),
+            "average_population_score": round(avg_population_impact, 2),
             "forecast_coverage_districts": forecast_coverage,
             "detection_coverage_districts": detection_coverage,
         },
         "risk_assessment": {
             "composite_risk_score": max_score,
             "operational_index": max_score,
+            "risk_level": top_classification.title(),
             "risk_classification": top_classification,
         },
         "confidence_metrics": {

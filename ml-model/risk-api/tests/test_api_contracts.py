@@ -79,7 +79,11 @@ def test_analyze_risk_returns_fused_operational_score(monkeypatch):
 
     assert summary["risk_score"] == summary["operational_score"]
     assert summary["risk_classification"] == summary["operational_classification"]
+    assert summary["risk_level"] == "High"
+    assert summary["alerts"]
     assert summary["fused_factors"]
     assert summary["component_scores"]["forecast"] > 0
+    assert summary["weighted_contributions"]["forecast"] > 0
     assert summary["detection_summary"]["analysis_date"] == "2026-03-13"
+    assert summary["explanation"]
     assert payload["enhanced_risk_modeling"]["risk_assessment"]["operational_index"] == summary["risk_score"]

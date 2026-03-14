@@ -53,6 +53,31 @@ function buildBboxAroundPoint(lat, lon, delta = 0.3) {
   return [lon - delta, lat - delta, lon + delta, lat + delta];
 }
 
+function getBboxCenter(bbox) {
+  if (!bbox || bbox.length !== 4) return null;
+  const [west, south, east, north] = bbox;
+  return {
+    lat: (south + north) / 2,
+    lon: (west + east) / 2,
+  };
+}
+
+function estimateRadiusFromBbox(bbox) {
+  if (!bbox || bbox.length !== 4) return 1500;
+  const [west, south, east, north] = bbox;
+  const latMid = (south + north) / 2;
+  const widthKm = Math.abs(east - west) * 111.32 * Math.cos((latMid * Math.PI) / 180);
+  const heightKm = Math.abs(north - south) * 110.574;
+  const radiusM = Math.max(widthKm, heightKm) * 500;
+  return Math.max(1000, Math.min(5000, Math.round(radiusM)));
+}
+
+function normalizeRegionName(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
 function getRiskTone(score) {
   if (score >= 85) {
     return {
@@ -245,10 +270,15 @@ export default function Dashboard() {
   const globalMetrics = useRiskStore((s) => s.globalMetrics);
   const riskLoading = useRiskStore((s) => s.isLoading);
   const riskError = useRiskStore((s) => s.error);
+  const fetchRiskAnalysis = useRiskStore((s) => s.fetchRiskAnalysis);
   const lifelineData = useLifelineStore((s) => s.data);
+  const lifelineLoading = useLifelineStore((s) => s.isLoading);
   const lifelineError = useLifelineStore((s) => s.error);
+  const fetchLifelineData = useLifelineStore((s) => s.fetchLifelineData);
   const [selectedRegionId, setSelectedRegionId] = useState(null);
   const [hasBootstrappedForecast, setHasBootstrappedForecast] = useState(false);
+  const [hasBootstrappedRisk, setHasBootstrappedRisk] = useState(false);
+  const [hasBootstrappedLifeline, setHasBootstrappedLifeline] = useState(false);
 
   useEffect(() => {
     if (!runs.length && !runsLoading) {
@@ -278,6 +308,68 @@ export default function Dashboard() {
     setHasBootstrappedForecast(true);
     fetchDistrictForecasts(nextBbox, 14, 6);
   }, [bbox, districts.length, fetchDistrictForecasts, forecastLoading, hasBootstrappedForecast, runs]);
+
+  useEffect(() => {
+    if (hasBootstrappedRisk || riskLoading || districtSummaries.length) return;
+
+    const sourceRun = runs.find((run) => run.lat != null && run.lon != null);
+    const nextBbox = bbox
+      ?? (sourceRun ? buildBboxAroundPoint(Number(sourceRun.lat), Number(sourceRun.lon)) : DEFAULT_FORECAST_BBOX);
+    const center = sourceRun
+      ? { lat: Number(sourceRun.lat), lon: Number(sourceRun.lon) }
+      : getBboxCenter(nextBbox);
+
+    if (!center) return;
+
+    setHasBootstrappedRisk(true);
+    fetchRiskAnalysis({
+      region: {
+        center,
+        bbox: nextBbox,
+        display_name: sourceRun?.location ?? "Dashboard AOI",
+      },
+      forecast_days: 5,
+    });
+  }, [
+    bbox,
+    districtSummaries.length,
+    fetchRiskAnalysis,
+    hasBootstrappedRisk,
+    riskLoading,
+    runs,
+  ]);
+
+  useEffect(() => {
+    if (hasBootstrappedLifeline || lifelineLoading || lifelineData) return;
+
+    const sourceRun = runs.find((run) => run.lat != null && run.lon != null);
+    const nextBbox = bbox
+      ?? (sourceRun ? buildBboxAroundPoint(Number(sourceRun.lat), Number(sourceRun.lon)) : DEFAULT_FORECAST_BBOX);
+    const center = sourceRun
+      ? { lat: Number(sourceRun.lat), lon: Number(sourceRun.lon) }
+      : getBboxCenter(nextBbox);
+
+    if (!center) return;
+
+    setHasBootstrappedLifeline(true);
+    fetchLifelineData({
+      center_lat: center.lat,
+      center_lon: center.lon,
+      radius_m: estimateRadiusFromBbox(nextBbox),
+      output_dir: ".",
+      output_prefix: "dashboard_infrastructure",
+      max_retries: 4,
+      retry_sleep: 10,
+      tag_sleep: 1.5,
+    });
+  }, [
+    bbox,
+    fetchLifelineData,
+    hasBootstrappedLifeline,
+    lifelineData,
+    lifelineLoading,
+    runs,
+  ]);
 
   const topRiskRegions = useMemo(() => {
     const merged = new Map();
@@ -354,6 +446,28 @@ export default function Dashboard() {
     () => topRiskRegions.find((item) => item.id === selectedRegionId) ?? topRiskRegions[0] ?? null,
     [selectedRegionId, topRiskRegions],
   );
+
+  const selectedDistrictSummary = useMemo(() => {
+    if (!districtSummaries.length) return null;
+    const regionName = normalizeRegionName(region?.name);
+    return districtSummaries.find((item) => normalizeRegionName(item.district_name) === regionName)
+      ?? districtSummaries[0];
+  }, [districtSummaries, region?.name]);
+
+  const selectedForecastDistrict = useMemo(() => {
+    if (!districts.length) return null;
+    const regionName = normalizeRegionName(region?.name);
+    return districts.find((item) => normalizeRegionName(item.name) === regionName)
+      ?? districts[0];
+  }, [districts, region?.name]);
+
+  const infrastructureHighlights = useMemo(() => {
+    if (!lifelineData?.summary) return [];
+    return Object.entries(lifelineData.summary)
+      .filter(([, count]) => Number(count) > 0)
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, 3);
+  }, [lifelineData]);
 
   const tone = getRiskTone(region?.riskScore ?? 0);
   const detectionRun = selectedRun?.status === "completed" ? selectedRun : latestCompletedRun;
@@ -864,7 +978,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {!!districtSummaries.length && (
+              {!!selectedDistrictSummary && (
                 <div className="space-y-4">
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -887,41 +1001,134 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    {districtSummaries.slice(0, 5).map((district) => (
-                      <div key={district.district_name} className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-black text-gray-900">{district.district_name}</div>
-                            <div className="mt-1 text-sm text-gray-500">
-                              {(district.contributing_factors ?? []).slice(0, 2).join(" • ") || "No major factors reported"}
-                            </div>
-                          </div>
-                          <div className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${compactClassificationTone(district.risk_classification)}`}>
-                            {district.risk_classification}
-                          </div>
-                        </div>
-
-                        <div className="mt-4 grid gap-3 sm:grid-cols-4">
-                          <div>
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Score</div>
-                            <div className="mt-1 text-lg font-black text-gray-900">{district.risk_score ?? "N/A"}</div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Hazard</div>
-                            <div className="mt-1 text-lg font-black text-gray-900">{formatNumber(district.component_scores?.hazard, 0)}</div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Exposure</div>
-                            <div className="mt-1 text-lg font-black text-gray-900">{formatNumber(district.component_scores?.exposure, 0)}</div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Population</div>
-                            <div className="mt-1 text-lg font-black text-gray-900">{formatCompact(district.population)}</div>
-                          </div>
+                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-black text-gray-900">{selectedDistrictSummary.district_name}</div>
+                        <div className="mt-1 text-sm text-gray-500">
+                          {(selectedDistrictSummary.explanation ?? selectedDistrictSummary.contributing_factors ?? []).slice(0, 3).join(" • ") || "No major factors reported"}
                         </div>
                       </div>
-                    ))}
+                      <div className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${compactClassificationTone(selectedDistrictSummary.risk_classification)}`}>
+                        {selectedDistrictSummary.risk_level ?? selectedDistrictSummary.risk_classification}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Final score</div>
+                        <div className="mt-1 text-lg font-black text-gray-900">{selectedDistrictSummary.risk_score ?? "N/A"}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Forecast weight</div>
+                        <div className="mt-1 text-lg font-black text-gray-900">{formatNumber(selectedDistrictSummary.weighted_contributions?.forecast, 1)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Detection weight</div>
+                        <div className="mt-1 text-lg font-black text-gray-900">{formatNumber(selectedDistrictSummary.weighted_contributions?.detection, 1)}</div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-gray-400">Population weight</div>
+                        <div className="mt-1 text-lg font-black text-gray-900">{formatNumber(selectedDistrictSummary.weighted_contributions?.population, 1)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    <div className="rounded-2xl border border-sky-100 bg-sky-50 p-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-sky-700">Forecast Engine</div>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Probability</span>
+                          <span className="font-black text-slate-900">
+                            {formatPercent((selectedForecastDistrict?.overall_max_prob ?? selectedDistrictSummary.forecast_summary?.forecast_probability ?? 0) * 100, 0)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Peak day</span>
+                          <span className="font-semibold text-slate-900">
+                            {selectedForecastDistrict?.peak_day ?? selectedDistrictSummary.forecast_summary?.peak_day ?? "N/A"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Risk band</span>
+                          <span className="font-semibold text-slate-900">
+                            {selectedForecastDistrict?.overall_alert_level ?? selectedDistrictSummary.forecast_summary?.overall_alert_level ?? "N/A"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-red-700">Satellite Detection Engine</div>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Flood detected</span>
+                          <span className="font-black text-slate-900">
+                            {selectedDistrictSummary.detection_summary?.flood_detected ? "Yes" : "No"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Flood area</span>
+                          <span className="font-semibold text-slate-900">
+                            {formatNumber(selectedDistrictSummary.detection_summary?.flood_area_km2, 1)} km2
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Analysis date</span>
+                          <span className="font-semibold text-slate-900">
+                            {selectedDistrictSummary.detection_summary?.analysis_date || "N/A"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">Impact Data</div>
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Population density</span>
+                          <span className="font-black text-slate-900">
+                            {formatNumber(selectedDistrictSummary.population_summary?.population_density, 0)}/km2
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Population</span>
+                          <span className="font-semibold text-slate-900">
+                            {formatCompact(selectedDistrictSummary.population)}
+                          </span>
+                        </div>
+                        <div className="flex items-start justify-between gap-3">
+                          <span>Infrastructure</span>
+                          <span className="text-right font-semibold text-slate-900">
+                            {(selectedDistrictSummary.infrastructure_summary?.critical_infrastructure ?? []).slice(0, 2).join(", ")
+                              || infrastructureHighlights.map(([name, count]) => `${name.replace(/_/g, " ")} (${count})`).join(", ")
+                              || "No scan data"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+                    <div className="rounded-2xl border border-gray-100 bg-white p-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Alerts</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {(selectedDistrictSummary.alerts ?? []).map((alert) => (
+                          <span key={alert} className="rounded-full bg-gray-900 px-3 py-1 text-xs font-bold text-white">
+                            {alert}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-gray-100 bg-white p-4">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-gray-500">Explanation</div>
+                      <ul className="mt-3 space-y-2 text-sm text-gray-700">
+                        {(selectedDistrictSummary.explanation ?? []).map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
                 </div>
               )}

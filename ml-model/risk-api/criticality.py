@@ -1,9 +1,14 @@
-"""criticality.py -- OmniFlood fused operational criticality scoring."""
+"""criticality.py -- OmniFlood Disaster Intelligence Fusion Engine."""
 
 from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Optional, Tuple
+
+FORECAST_WEIGHT = 0.40
+DETECTION_WEIGHT = 0.30
+POPULATION_WEIGHT = 0.20
+INFRASTRUCTURE_WEIGHT = 0.10
 
 
 def _clamp(value: float, lower: float = 0.0, upper: float = 100.0) -> float:
@@ -16,78 +21,51 @@ def _classify(score: int) -> str:
     if score >= 50:
         return "HIGH"
     if score >= 25:
-        return "MODERATE"
+        return "MEDIUM"
     return "LOW"
 
 
-def _weighted_average(values: List[Tuple[Optional[float], float]]) -> float:
-    usable = [(value, weight) for value, weight in values if value is not None and weight > 0]
-    if not usable:
-        return 0.0
-    total_weight = sum(weight for _, weight in usable)
-    return sum(value * weight for value, weight in usable) / total_weight
+def _title_case_level(level: str) -> str:
+    return level.capitalize().title()
 
 
-def _population_component(population: int, max_pop: int) -> Dict[str, Any]:
-    pop_score = _clamp((math.log10(max(population, 1)) / math.log10(max_pop)) * 100)
+def _population_component(
+    population: int,
+    area_km2: float,
+    land_cover: Dict[str, float],
+    max_density: int = 15000,
+) -> Dict[str, Any]:
+    density = population / max(area_km2, 0.1)
+    density_score = _clamp((math.log10(max(density, 1.0)) / math.log10(max_density)) * 100.0)
+    urban_pct = float(land_cover.get("urban", 0.0)) * 100.0
+    population_score = _clamp((density_score * 0.75) + (urban_pct * 0.25))
+
     reasons: List[str] = []
-    if pop_score >= 80:
-        reasons.append("Very large exposed population")
-    elif pop_score >= 60:
-        reasons.append("Large exposed population")
+    if density >= 8000:
+        reasons.append("Area has high population density")
+    elif density >= 4000:
+        reasons.append("Area has elevated population density")
+    if urban_pct >= 35:
+        reasons.append("Urbanized land cover increases exposure")
 
     return {
-        "key": "population_exposure",
-        "label": "Population exposure",
-        "score": round(pop_score, 2),
-        "weight": 0.55,
-        "value": population,
-        "available": True,
-        "reason": reasons[0] if reasons else "Population baseline within expected range",
+        "key": "population_impact",
+        "label": "Population impact",
+        "score": round(population_score, 2),
+        "weight": POPULATION_WEIGHT,
+        "value": {
+            "population": population,
+            "population_density": round(density, 2),
+            "urban_pct": round(urban_pct, 2),
+        },
+        "reason": reasons[0] if reasons else "Population exposure remains limited",
+        "reasons": reasons,
         "details": {
             "population": population,
-            "normalization_cap": max_pop,
-        },
-        "reasons": reasons,
-    }
-
-
-def _land_cover_component(land_cover: Dict[str, float]) -> Dict[str, Any]:
-    urban_pct = float(land_cover.get("urban", 0.0)) * 100
-    water_pct = float(land_cover.get("water", 0.0)) * 100
-    crop_pct = float(land_cover.get("crop", 0.0)) * 100
-
-    urban_risk = urban_pct * 1.35
-    surface_water_risk = water_pct * 1.15
-    cropland_risk = crop_pct * 0.35
-    land_score = _clamp(urban_risk + surface_water_risk + cropland_risk)
-
-    reasons: List[str] = []
-    if urban_pct >= 35:
-        reasons.append("High urban cover increases runoff")
-    if water_pct >= 15:
-        reasons.append("Nearby water or wetlands increase flood sensitivity")
-    if crop_pct >= 40:
-        reasons.append("Extensive cropland may increase standing-water exposure")
-
-    return {
-        "key": "land_cover_urbanization",
-        "label": "Land cover and urbanization",
-        "score": round(land_score, 2),
-        "weight": 0.30,
-        "value": {
+            "population_density": round(density, 2),
             "urban_pct": round(urban_pct, 2),
-            "water_pct": round(water_pct, 2),
-            "crop_pct": round(crop_pct, 2),
+            "area_km2": round(area_km2, 2),
         },
-        "available": True,
-        "reason": reasons[0] if reasons else "Land cover baseline risk is limited",
-        "details": {
-            "urban_pct": round(urban_pct, 2),
-            "water_pct": round(water_pct, 2),
-            "crop_pct": round(crop_pct, 2),
-        },
-        "reasons": reasons,
     }
 
 
@@ -97,245 +75,281 @@ def _forecast_component(
     max_rain: float,
 ) -> Dict[str, Any]:
     if forecast_signal and forecast_signal.get("available", True):
-        overall_max_prob = float(forecast_signal.get("overall_max_prob", 0.0))
-        daily_forecasts = forecast_signal.get("daily_forecasts", []) or []
+        probability = float(forecast_signal.get("overall_max_prob", 0.0) or 0.0)
+        forecast_score = _clamp(probability * 100.0)
         peak_day = int(forecast_signal.get("peak_day", 0) or 0)
-        imminence_bonus = 100.0 if peak_day and peak_day <= 2 else 70.0 if peak_day and peak_day <= 5 else 40.0
-        avg_prob = 0.0
-        if daily_forecasts:
-            avg_prob = sum(float(day.get("max_prob", 0.0)) for day in daily_forecasts[:5]) / min(len(daily_forecasts), 5)
-        forecast_score = _clamp((overall_max_prob * 75.0) + (avg_prob * 15.0) + (imminence_bonus * 0.10))
 
         reasons: List[str] = []
-        if overall_max_prob >= 0.75:
-            reasons.append("Forecast model indicates high multi-day flood probability")
-        elif overall_max_prob >= 0.5:
-            reasons.append("Forecast model indicates elevated multi-day flood probability")
+        if probability >= 0.8:
+            reasons.append("Rainfall forecast extremely high")
+        elif probability >= 0.6:
+            reasons.append("Forecast engine signals high flood probability")
+        elif probability >= 0.4:
+            reasons.append("Forecast engine signals elevated flood probability")
         if peak_day and peak_day <= 2:
-            reasons.append("Forecast peak arrives within 48 hours")
+            reasons.append("Peak flood risk arrives within 48 hours")
 
         return {
             "key": "forecast_probability",
-            "label": "Multi-day forecast",
+            "label": "Forecast engine",
             "score": round(forecast_score, 2),
-            "weight": 0.45,
+            "weight": FORECAST_WEIGHT,
             "value": {
-                "overall_max_prob": round(overall_max_prob, 4),
+                "forecast_probability": round(probability, 4),
+                "rainfall_last_24h": forecast_signal.get("rainfall_last_24h"),
+                "rainfall_next_48h": forecast_signal.get("rainfall_next_48h"),
+            },
+            "reason": reasons[0] if reasons else "Forecast signal remains limited",
+            "reasons": reasons,
+            "details": {
+                "forecast_probability": round(probability, 4),
                 "peak_day": peak_day,
                 "peak_date": forecast_signal.get("peak_date"),
+                "daily_forecasts": forecast_signal.get("daily_forecasts", [])[:5],
                 "overall_alert_level": forecast_signal.get("overall_alert_level"),
             },
-            "available": True,
-            "reason": reasons[0] if reasons else "Forecast signal remains limited",
-            "details": {
-                "overall_max_prob": round(overall_max_prob, 4),
-                "peak_day": peak_day,
-                "peak_date": forecast_signal.get("peak_date"),
-                "daily_forecasts": daily_forecasts[:5],
-            },
-            "reasons": reasons,
         }
 
-    rainfall_score = _clamp((rainfall_mm / max_rain) * 100)
-    reasons = ["Using recent rainfall as fallback forecast proxy"] if rainfall_mm > 0 else ["Forecast signal unavailable"]
+    fallback_score = _clamp((rainfall_mm / max_rain) * 100.0)
     return {
         "key": "forecast_probability",
-        "label": "Multi-day forecast",
-        "score": round(rainfall_score * 0.6, 2),
-        "weight": 0.25,
+        "label": "Forecast engine",
+        "score": round(fallback_score, 2),
+        "weight": FORECAST_WEIGHT,
         "value": {
-            "rainfall_mm_30d": round(rainfall_mm, 2),
+            "forecast_probability": round(fallback_score / 100.0, 4),
+            "rainfall_last_24h": None,
+            "rainfall_next_48h": None,
             "fallback": True,
         },
-        "available": False,
-        "reason": reasons[0],
+        "reason": "Forecast unavailable, using rainfall proxy",
+        "reasons": ["Forecast unavailable, using rainfall proxy"] if rainfall_mm > 0 else ["Forecast signal unavailable"],
         "details": {
-            "rainfall_mm_30d": round(rainfall_mm, 2),
+            "rainfall_proxy_mm": round(rainfall_mm, 2),
             "fallback": True,
         },
-        "reasons": reasons,
     }
 
 
 def _detection_component(detection_signal: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not detection_signal or not detection_signal.get("available", False):
         return {
-            "key": "current_flood_detection",
-            "label": "Current SAR flood detection",
+            "key": "detected_flood",
+            "label": "Satellite flood detection",
             "score": 0.0,
-            "weight": 0.30,
-            "value": None,
-            "available": False,
-            "reason": "No recent SAR detection available for this area",
-            "details": detection_signal or {},
+            "weight": DETECTION_WEIGHT,
+            "value": {
+                "flood_detected": False,
+                "flood_area_km2": 0.0,
+            },
+            "reason": "No active flooding detected from SAR",
             "reasons": [],
+            "details": detection_signal or {},
         }
 
     flood_pct = float(detection_signal.get("flood_percentage", 0.0) or 0.0)
+    flood_area_km2 = float(detection_signal.get("flood_area_km2", 0.0) or 0.0)
     confidence = float(detection_signal.get("confidence_avg", 0.0) or 0.0)
-    overlap = float(detection_signal.get("bbox_overlap_ratio", 1.0) or 0.0)
-    db_drop = abs(float(detection_signal.get("mean_db_drop", 0.0) or 0.0))
-    detection_score = _clamp((flood_pct * 1.4) + (confidence * 28.0) + (db_drop * 8.0) + (overlap * 12.0))
+    flood_detected = flood_pct >= 0.5 or flood_area_km2 >= 0.1
+    extent_score = _clamp((flood_pct * 4.0) + (flood_area_km2 * 10.0))
+    detection_score = _clamp((35.0 if flood_detected else 0.0) + (extent_score * 0.45) + (confidence * 20.0))
 
     reasons: List[str] = []
-    if flood_pct >= 15:
-        reasons.append("SAR detection shows active inundation in the area")
-    elif flood_pct >= 5:
-        reasons.append("SAR detection indicates localized inundation")
-    if confidence >= 0.7:
+    if flood_detected:
+        reasons.append("Satellite detected active flooding")
+    if flood_area_km2 >= 2.0:
+        reasons.append("Flood extent is already significant")
+    if confidence >= 0.75:
         reasons.append("Detection confidence is strong")
 
     return {
-        "key": "current_flood_detection",
-        "label": "Current SAR flood detection",
+        "key": "detected_flood",
+        "label": "Satellite flood detection",
         "score": round(detection_score, 2),
-        "weight": 0.30,
+        "weight": DETECTION_WEIGHT,
         "value": {
-            "flood_percentage": round(flood_pct, 2),
-            "confidence_avg": round(confidence, 3),
-            "zones_count": int(detection_signal.get("zones_count", 0) or 0),
-            "analysis_date": detection_signal.get("analysis_date"),
+            "flood_detected": flood_detected,
+            "flood_area_km2": round(flood_area_km2, 2),
         },
-        "available": True,
-        "reason": reasons[0] if reasons else "SAR detection indicates limited active flooding",
-        "details": {
-            "flood_percentage": round(flood_pct, 2),
-            "confidence_avg": round(confidence, 3),
-            "zones_count": int(detection_signal.get("zones_count", 0) or 0),
-            "population_exposed": int(detection_signal.get("population_exposed", 0) or 0),
-            "bbox_overlap_ratio": round(overlap, 3),
-            "analysis_date": detection_signal.get("analysis_date"),
-        },
+        "reason": reasons[0] if reasons else "Satellite sees only limited flooding",
         "reasons": reasons,
+        "details": {
+            "flood_detected": flood_detected,
+            "flood_area_km2": round(flood_area_km2, 2),
+            "flood_percentage": round(flood_pct, 2),
+            "confidence_avg": round(confidence, 3),
+            "analysis_date": detection_signal.get("analysis_date"),
+            "zones_count": int(detection_signal.get("zones_count", 0) or 0),
+        },
     }
 
 
 def _infrastructure_component(infrastructure_signal: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not infrastructure_signal:
         return {
-            "key": "infrastructure_exposure",
-            "label": "Infrastructure exposure",
-            "score": None,
-            "weight": 0.15,
-            "value": None,
-            "available": False,
-            "reason": "No infrastructure exposure data supplied",
-            "details": {},
+            "key": "infrastructure_risk",
+            "label": "Infrastructure risk",
+            "score": 0.0,
+            "weight": INFRASTRUCTURE_WEIGHT,
+            "value": {
+                "critical_infrastructure": [],
+                "critical_assets_exposed": 0,
+                "facilities_cut_off": 0,
+            },
+            "reason": "No critical infrastructure exposure reported",
             "reasons": [],
+            "details": {},
         }
 
+    critical_assets = int(infrastructure_signal.get("critical_assets_exposed", 0) or 0)
+    facilities_cut_off = int(infrastructure_signal.get("facilities_cut_off", 0) or 0)
+    disruption = float(infrastructure_signal.get("road_access_disruption_index", 0.0) or 0.0)
+    infra_types = list(infrastructure_signal.get("critical_infrastructure", []) or [])
+
     if infrastructure_signal.get("score_override") is not None:
-        score = _clamp(float(infrastructure_signal["score_override"]))
+        infrastructure_score = _clamp(float(infrastructure_signal["score_override"]))
     else:
-        critical_assets = int(infrastructure_signal.get("critical_assets_exposed", 0) or 0)
-        facilities_cut_off = int(infrastructure_signal.get("facilities_cut_off", 0) or 0)
-        disruption = float(infrastructure_signal.get("road_access_disruption_index", 0.0) or 0.0)
-        score = _clamp((critical_assets * 10.0) + (facilities_cut_off * 15.0) + (disruption * 40.0))
+        infrastructure_score = _clamp(
+            (len(infra_types) * 15.0) +
+            (critical_assets * 10.0) +
+            (facilities_cut_off * 15.0) +
+            (disruption * 25.0)
+        )
 
     reasons: List[str] = []
-    if int(infrastructure_signal.get("critical_assets_exposed", 0) or 0) > 0:
-        reasons.append("Critical infrastructure lies inside the exposed area")
-    if int(infrastructure_signal.get("facilities_cut_off", 0) or 0) > 0:
-        reasons.append("Some facilities may be cut off during flooding")
+    if infra_types:
+        reasons.append(f"Critical infrastructure exposed: {', '.join(infra_types[:2])}")
+    elif critical_assets > 0:
+        reasons.append("Critical infrastructure assets are exposed")
+    if facilities_cut_off > 0:
+        reasons.append("Some critical facilities may be cut off")
 
     return {
-        "key": "infrastructure_exposure",
-        "label": "Infrastructure exposure",
-        "score": round(score, 2),
-        "weight": 0.15,
+        "key": "infrastructure_risk",
+        "label": "Infrastructure risk",
+        "score": round(infrastructure_score, 2),
+        "weight": INFRASTRUCTURE_WEIGHT,
         "value": {
-            "critical_assets_exposed": int(infrastructure_signal.get("critical_assets_exposed", 0) or 0),
-            "facilities_cut_off": int(infrastructure_signal.get("facilities_cut_off", 0) or 0),
-            "road_access_disruption_index": infrastructure_signal.get("road_access_disruption_index"),
+            "critical_infrastructure": infra_types,
+            "critical_assets_exposed": critical_assets,
+            "facilities_cut_off": facilities_cut_off,
         },
-        "available": True,
         "reason": reasons[0] if reasons else "Infrastructure exposure remains limited",
-        "details": {
-            "critical_assets_exposed": int(infrastructure_signal.get("critical_assets_exposed", 0) or 0),
-            "facilities_cut_off": int(infrastructure_signal.get("facilities_cut_off", 0) or 0),
-            "road_access_disruption_index": infrastructure_signal.get("road_access_disruption_index"),
-            "score_override": infrastructure_signal.get("score_override"),
-        },
         "reasons": reasons,
+        "details": {
+            "critical_infrastructure": infra_types,
+            "critical_assets_exposed": critical_assets,
+            "facilities_cut_off": facilities_cut_off,
+            "road_access_disruption_index": disruption,
+        },
     }
+
+
+def _build_alerts(level: str, infrastructure_component: Dict[str, Any]) -> List[str]:
+    infra_types = infrastructure_component.get("details", {}).get("critical_infrastructure", []) or []
+
+    if level == "CRITICAL":
+        alerts = [
+            "Immediate evacuation recommended",
+            "Deploy rescue boats",
+            "Alert nearby hospitals",
+        ]
+    elif level == "HIGH":
+        alerts = [
+            "Prepare evacuation shelters",
+            "Deploy emergency crews",
+            "Alert critical facilities",
+        ]
+    elif level == "MEDIUM":
+        alerts = [
+            "Issue flood watch",
+            "Monitor low-lying roads",
+            "Notify ward response teams",
+        ]
+    else:
+        alerts = ["Continue monitoring conditions"]
+
+    if "hospital" in infra_types and "Alert nearby hospitals" not in alerts:
+        alerts.append("Alert nearby hospitals")
+
+    return alerts[:3]
+
+
+def _build_explanation(components: List[Tuple[Dict[str, Any], float]]) -> List[str]:
+    explanations: List[str] = []
+    for component, _ in sorted(components, key=lambda item: item[1], reverse=True):
+        for reason in component.get("reasons", []):
+            if reason not in explanations:
+                explanations.append(reason)
+            if len(explanations) >= 3:
+                return explanations
+    return explanations or ["No major flood drivers are active"]
 
 
 def calculate_criticality_index(
     population: int,
     rainfall_mm: float,
     land_cover: Dict[str, float],
+    area_km2: float = 1.0,
     detection_signal: Optional[Dict[str, Any]] = None,
     forecast_signal: Optional[Dict[str, Any]] = None,
     infrastructure_signal: Optional[Dict[str, Any]] = None,
-    max_pop: int = 5_000_000,
-    max_rain: float = 1000.0,
+    max_rain: float = 300.0,
 ) -> Dict[str, Any]:
-    """
-    Build a first-pass OmniFlood Criticality Index.
-
-    The output is intentionally structured so it can later support smaller
-    administrative units without changing the factor schema.
-    """
-    population_component = _population_component(population, max_pop=max_pop)
-    land_component = _land_cover_component(land_cover)
     forecast_component = _forecast_component(forecast_signal, rainfall_mm, max_rain=max_rain)
     detection_component = _detection_component(detection_signal)
+    population_component = _population_component(population, area_km2, land_cover)
     infrastructure_component = _infrastructure_component(infrastructure_signal)
 
-    hazard_score = _weighted_average([
-        (detection_component["score"], detection_component["weight"] if detection_component["available"] else 0.0),
-        (forecast_component["score"], forecast_component["weight"]),
-    ])
-    exposure_score = _weighted_average([
-        (population_component["score"], population_component["weight"]),
-        (land_component["score"], land_component["weight"]),
-        (infrastructure_component["score"], infrastructure_component["weight"] if infrastructure_component["available"] else 0.0),
-    ])
+    weighted_forecast = forecast_component["score"] * FORECAST_WEIGHT
+    weighted_detection = detection_component["score"] * DETECTION_WEIGHT
+    weighted_population = population_component["score"] * POPULATION_WEIGHT
+    weighted_infrastructure = infrastructure_component["score"] * INFRASTRUCTURE_WEIGHT
 
-    compounding_bonus = ((hazard_score / 100.0) * (exposure_score / 100.0)) * 15.0
-    score = _clamp((hazard_score * 0.58) + (exposure_score * 0.42) + compounding_bonus)
+    score = _clamp(weighted_forecast + weighted_detection + weighted_population + weighted_infrastructure)
     score_int = int(round(score))
     classification = _classify(score_int)
+    risk_level = _title_case_level(classification)
 
     components = [
-        detection_component,
         forecast_component,
+        detection_component,
         population_component,
-        land_component,
+        infrastructure_component,
     ]
-    if infrastructure_component["score"] is not None:
-        components.append(infrastructure_component)
-
-    reasons: List[str] = []
-    for component in sorted(components, key=lambda item: item["score"] or 0.0, reverse=True):
-        for reason in component.get("reasons", []):
-            if reason not in reasons:
-                reasons.append(reason)
-        if len(reasons) >= 4:
-            break
-    if not reasons:
-        reasons.append("Baseline operational flood risk remains limited")
+    explanation = _build_explanation([
+        (forecast_component, weighted_forecast),
+        (detection_component, weighted_detection),
+        (population_component, weighted_population),
+        (infrastructure_component, weighted_infrastructure),
+    ])
+    alerts = _build_alerts(classification, infrastructure_component)
 
     return {
         "score": score_int,
         "classification": classification,
-        "reasons": reasons,
+        "risk_level": risk_level,
+        "alerts": alerts,
+        "reasons": explanation,
+        "explanation": explanation,
         "factors": components,
         "component_scores": {
-            "hazard": round(hazard_score, 2),
-            "exposure": round(exposure_score, 2),
-            "detection": round(float(detection_component["score"] or 0.0), 2),
-            "forecast": round(float(forecast_component["score"] or 0.0), 2),
-            "population": round(float(population_component["score"] or 0.0), 2),
-            "land_cover": round(float(land_component["score"] or 0.0), 2),
-            "infrastructure": round(float(infrastructure_component["score"] or 0.0), 2)
-            if infrastructure_component["score"] is not None else None,
+            "forecast": round(forecast_component["score"], 2),
+            "detection": round(detection_component["score"], 2),
+            "population": round(population_component["score"], 2),
+            "infrastructure": round(infrastructure_component["score"], 2),
+        },
+        "weighted_contributions": {
+            "forecast": round(weighted_forecast, 2),
+            "detection": round(weighted_detection, 2),
+            "population": round(weighted_population, 2),
+            "infrastructure": round(weighted_infrastructure, 2),
         },
         "signals": {
             "forecast": forecast_component["details"],
             "detection": detection_component["details"],
+            "population": population_component["details"],
             "infrastructure": infrastructure_component["details"],
-            "rainfall_mm_30d": round(rainfall_mm, 2),
         },
     }
 
@@ -345,16 +359,13 @@ def calculate_risk_score(
     rainfall_mm: float,
     land_cover: Dict[str, float],
     max_pop: int = 5_000_000,
-    max_rain: float = 1000.0,
+    max_rain: float = 300.0,
 ) -> Tuple[int, str, List[str]]:
-    """
-    Backwards-compatible wrapper for callers that still expect the legacy tuple.
-    """
+    del max_pop
     result = calculate_criticality_index(
         population=population,
         rainfall_mm=rainfall_mm,
         land_cover=land_cover,
-        max_pop=max_pop,
         max_rain=max_rain,
     )
     return result["score"], result["classification"], result["reasons"]

@@ -6,6 +6,7 @@ def test_criticality_critical_when_hazard_and_exposure_are_both_high():
         population=4_500_000,
         rainfall_mm=800.0,
         land_cover={"urban": 0.8, "water": 0.1, "forest": 0.05},
+        area_km2=350.0,
         forecast_signal={
             "available": True,
             "overall_max_prob": 0.88,
@@ -27,8 +28,11 @@ def test_criticality_critical_when_hazard_and_exposure_are_both_high():
     )
     assert result["score"] >= 75
     assert result["classification"] == "CRITICAL"
-    assert any(f["key"] == "current_flood_detection" for f in result["factors"])
-    assert "SAR detection shows active inundation in the area" in result["reasons"]
+    assert result["risk_level"] == "Critical"
+    assert any(f["key"] == "detected_flood" for f in result["factors"])
+    assert "Satellite detected active flooding" in result["explanation"]
+    assert result["alerts"]
+    assert result["weighted_contributions"]["forecast"] > result["weighted_contributions"]["infrastructure"]
 
 
 def test_criticality_low_when_all_inputs_are_muted():

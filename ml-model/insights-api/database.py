@@ -1,9 +1,11 @@
 """database.py -- NeonDB (PostgreSQL) schema and CRUD for historical flood runs."""
 
-import os
 import json
+import logging
+import os
+import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -12,17 +14,74 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+log = logging.getLogger("insights.database")
+
+_SCHEMA_READY = False
+_SCHEMA_LOCK = threading.Lock()
+_RETRYABLE_ERRORS = (psycopg2.OperationalError, psycopg2.InterfaceError)
 
 # ---------------------------------------------------------------------------
 # Connection helper
 # ---------------------------------------------------------------------------
 
+def _get_database_url() -> str:
+    """Return the current DATABASE_URL value from the environment."""
+    return os.getenv("DATABASE_URL", "").strip()
+
+
 def _get_conn():
     """Return a new psycopg2 connection using the DATABASE_URL env var."""
-    if not DATABASE_URL:
+    database_url = _get_database_url()
+    if not database_url:
         raise RuntimeError("DATABASE_URL not set -- cannot connect to NeonDB")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    return psycopg2.connect(
+        database_url,
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        connect_timeout=10,
+    )
+
+
+def _close_quietly(conn) -> None:
+    """Close a connection without masking the original error."""
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def _rollback_quietly(conn) -> None:
+    """Rollback a connection if it is still usable."""
+    if conn is None:
+        return
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+def _run_db_op(operation, *, retries: int = 1):
+    """Run a database operation with one reconnect retry for transient failures."""
+    attempt = 0
+    while True:
+        conn = None
+        try:
+            conn = _get_conn()
+            result = operation(conn)
+            conn.commit()
+            return result
+        except _RETRYABLE_ERRORS as exc:
+            _rollback_quietly(conn)
+            if attempt >= retries:
+                raise
+            attempt += 1
+            log.warning("Retrying database operation after transient error: %s", exc)
+        except Exception:
+            _rollback_quietly(conn)
+            raise
+        finally:
+            _close_quietly(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +141,30 @@ CREATE INDEX IF NOT EXISTS idx_patches_run ON flood_patches(run_id);
 """
 
 
-def ensure_schema():
+def ensure_schema(force: bool = False):
     """Create tables if they don't exist."""
-    with _get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(_SCHEMA_SQL)
-        conn.commit()
-    print("[database] Schema ensured")
+    global _SCHEMA_READY
+
+    if _SCHEMA_READY and not force:
+        return
+
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY and not force:
+            return
+
+        def operation(conn):
+            with conn.cursor() as cur:
+                cur.execute(_SCHEMA_SQL)
+
+        _run_db_op(operation)
+        _SCHEMA_READY = True
+        log.info("Database schema ensured")
+
+
+def _ensure_schema_ready() -> None:
+    """Bootstrap schema lazily if startup initialization previously failed."""
+    if not _SCHEMA_READY:
+        ensure_schema()
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +179,10 @@ def create_run(
     analysis_date: Optional[str],
 ) -> str:
     """Insert a new run row and return its UUID."""
+    _ensure_schema_ready()
     run_id = str(uuid.uuid4())
-    with _get_conn() as conn:
+
+    def operation(conn):
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -113,13 +191,16 @@ def create_run(
                 """,
                 (run_id, location, lat, lon, bbox, analysis_date),
             )
-        conn.commit()
+
+    _run_db_op(operation)
     return run_id
 
 
 def update_run_status(run_id: str, status: str, progress: int = 0, error: Optional[str] = None):
     """Update run status and optional progress/error."""
-    with _get_conn() as conn:
+    _ensure_schema_ready()
+
+    def operation(conn):
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -128,7 +209,8 @@ def update_run_status(run_id: str, status: str, progress: int = 0, error: Option
                 """,
                 (status, progress, error, run_id),
             )
-        conn.commit()
+
+    _run_db_op(operation)
 
 
 def save_results(
@@ -146,7 +228,9 @@ def save_results(
     patches: List[Dict[str, Any]],
 ):
     """Persist completed analysis results and associated flood patches."""
-    with _get_conn() as conn:
+    _ensure_schema_ready()
+
+    def operation(conn):
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -193,43 +277,48 @@ def save_results(
                         json.dumps(p.get("geometry")),
                     ),
                 )
-        conn.commit()
+
+    _run_db_op(operation)
 
 
 def get_run(run_id: str) -> Optional[Dict[str, Any]]:
     """Fetch a single run with its patches."""
-    with _get_conn() as conn:
+    _ensure_schema_ready()
+
+    def operation(conn):
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM runs WHERE id = %s", (run_id,))
             run = cur.fetchone()
             if not run:
                 return None
 
-            run = dict(run)
-            # Convert datetime / UUID to string
-            for k, v in run.items():
+            run_data = dict(run)
+            for k, v in run_data.items():
                 if isinstance(v, (datetime, uuid.UUID)):
-                    run[k] = str(v)
+                    run_data[k] = str(v)
 
-            # Fetch patches
             cur.execute(
                 "SELECT * FROM flood_patches WHERE run_id = %s ORDER BY area_km2 DESC",
                 (run_id,),
             )
             patches = []
             for row in cur.fetchall():
-                row = dict(row)
-                for k, v in row.items():
+                row_data = dict(row)
+                for k, v in row_data.items():
                     if isinstance(v, (datetime, uuid.UUID)):
-                        row[k] = str(v)
-                patches.append(row)
-            run["patches"] = patches
-            return run
+                        row_data[k] = str(v)
+                patches.append(row_data)
+            run_data["patches"] = patches
+            return run_data
+
+    return _run_db_op(operation)
 
 
 def list_runs(limit: int = 50) -> List[Dict[str, Any]]:
     """Return recent runs (without full result_json for brevity)."""
-    with _get_conn() as conn:
+    _ensure_schema_ready()
+
+    def operation(conn):
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -245,9 +334,11 @@ def list_runs(limit: int = 50) -> List[Dict[str, Any]]:
             )
             rows = []
             for row in cur.fetchall():
-                row = dict(row)
-                for k, v in row.items():
+                row_data = dict(row)
+                for k, v in row_data.items():
                     if isinstance(v, (datetime, uuid.UUID)):
-                        row[k] = str(v)
-                rows.append(row)
+                        row_data[k] = str(v)
+                rows.append(row_data)
             return rows
+
+    return _run_db_op(operation)
